@@ -47,6 +47,9 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
     @Resource
     RedissonClient redissonClient;
 
+    @Resource
+    RedisIdWorker redisIdWorker;
+
     private static final DefaultRedisScript<Long> SECKILL_SCRITP;
     static {
         SECKILL_SCRITP = new DefaultRedisScript<>();
@@ -61,11 +64,13 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
 
     @Transactional
     public Result seckillVoucherByLua(Long voucherId){
+        long orderId = redisIdWorker.nextId("order");
         Long result = stringRedisTemplate.execute(
                 SECKILL_SCRITP,
                 Collections.emptyList(),
                 voucherId.toString(),
-                UserHolder.getUser().getId().toString());
+                UserHolder.getUser().getId().toString(),
+                String.valueOf(orderId));
         if (result.intValue() != 0){
             return Result.fail(result.intValue() == 1 ? "库存不足":"不能重复下单");
         }
