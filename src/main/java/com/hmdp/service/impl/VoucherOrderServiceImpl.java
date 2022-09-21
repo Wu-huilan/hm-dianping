@@ -1,5 +1,6 @@
 package com.hmdp.service.impl;
 
+import com.hmdp.config.RedissonConfig;
 import com.hmdp.dto.Result;
 import com.hmdp.dto.UserDTO;
 import com.hmdp.entity.SeckillVoucher;
@@ -12,13 +13,18 @@ import com.hmdp.service.IVoucherService;
 import com.hmdp.utils.RedisIdWorker;
 import com.hmdp.utils.SimpleRedisLock;
 import com.hmdp.utils.UserHolder;
+import org.redisson.api.RLock;
+import org.redisson.api.RedissonClient;
 import org.springframework.aop.framework.AopContext;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import javax.annotation.Resource;
 import java.time.LocalDateTime;
+import java.util.Collections;
 
 /**
  * <p>
@@ -38,9 +44,32 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
     @Resource
     StringRedisTemplate stringRedisTemplate;
 
+    @Resource
+    RedissonClient redissonClient;
+
+    private static final DefaultRedisScript<Long> SECKILL_SCRITP;
+    static {
+        SECKILL_SCRITP = new DefaultRedisScript<>();
+        SECKILL_SCRITP.setLocation(new ClassPathResource("seckill.lua"));
+        SECKILL_SCRITP.setResultType(Long.class);
+    }
+
     @Override
     public Result seckillVoucher(Long voucherId) {
         return seckillVoucherByPessimistic(voucherId);
+    }
+
+    @Transactional
+    public Result seckillVoucherByLua(Long voucherId){
+        Long result = stringRedisTemplate.execute(
+                SECKILL_SCRITP,
+                Collections.emptyList(),
+                voucherId.toString(),
+                UserHolder.getUser().getId().toString());
+        if (result.intValue() != 0){
+            return Result.fail(result.intValue() == 1 ? "库存不足":"不能重复下单");
+        }
+        return null;
     }
 
     @Transactional
@@ -63,15 +92,19 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         }*/
 
         //集群版（分布式锁）
-        SimpleRedisLock simpleRedisLock = new SimpleRedisLock("order:"+userId,stringRedisTemplate);
-        if (!simpleRedisLock.tryLock(1200)){
+//        SimpleRedisLock simpleRedisLock = new SimpleRedisLock("order:"+userId,stringRedisTemplate);
+        RLock lock = redissonClient.getLock("order:" + userId);
+        boolean b = lock.tryLock();
+//        if (!simpleRedisLock.tryLock(1200)){
+        if(!lock.tryLock()){
             return Result.fail("一人只能下一单!");
         }
         try {
             IVoucherOrderService proxy = (IVoucherOrderService)AopContext.currentProxy();
             return proxy.createVoucherOrder(voucherId,userId);
         }finally {
-            simpleRedisLock.unLock();
+//            simpleRedisLock.unLock();
+            lock.unlock();
         }
     }
 
