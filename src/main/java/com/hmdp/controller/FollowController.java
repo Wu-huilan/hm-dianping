@@ -32,7 +32,7 @@ public class FollowController {
         return iFollowService.isFollow(followUserId);
     }
 
-    @GetMapping("/or/not/{id}")
+    @GetMapping("/common")
     public Result followCommon(@PathVariable("id") Long followUserId){
         return iFollowService.followCommon(followUserId);
     }
